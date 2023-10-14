@@ -6,17 +6,27 @@ from airflow.operators.bash import BashOperator
 from airflow.operators.python import PythonOperator
 
 dag = DAG(
-    dag_id="01_unscheduled", start_date=dt.datetime(2019, 1, 1), schedule_interval=None
+    dag_id="01_unscheduled",
+    start_date=dt.datetime(2019, 1, 1),
+    schedule_interval="@hourly",
+    catchup=False,
 )
 fetch_events = BashOperator(
     task_id="fetch_events",
-    bash_command="mkdir -p /data && curl -o /data/events.json https://localhost:5000/events",
+    bash_command="mkdir -p /data/events && "
+    "curl -o /data/events/{{ds}}.json "
+    "http://localhost:5000/events?"
+    "start_date={{ds}}&"
+    "end_date={{next_ds}}",
     dag=dag,
 )
 
 
-def _calculate_stats(input_path, output_path):
+def _calculate_stats(**context):
     """Calculate event statistics"""
+    input_path = context["template_dict"]["input_path"]
+    output_path = context["template_dict"]["output_path"]
+
     events = pd.read_json(input_path)
     stats = events.groupby(["date", "user"]).size().reset_index()
     Path(output_path).parent.mkdir(exist_ok=True)
@@ -26,7 +36,10 @@ def _calculate_stats(input_path, output_path):
 calculate_stats = PythonOperator(
     task_id="calculate_stats",
     python_callable=_calculate_stats,
-    op_kwargs={"input_path": "/data/events.json", "output_path": "/data/stats.csv"},
+    templates_dict={
+        "input_path": "/data/events/{{ds}}.json",
+        "output_path": "/data/stats/{{ds}}.csv",
+    },
     dag=dag,
 )
 
